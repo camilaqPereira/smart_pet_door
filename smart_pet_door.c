@@ -6,10 +6,8 @@ void user_request(char **request);
 
 
 // Função de callback para processar requisições HTTP
-static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
-{
-    if (!p)
-    {
+static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
+    if (!p){
         tcp_close(tpcb);
         tcp_recv(tpcb, NULL);
         return ERR_OK;
@@ -26,7 +24,7 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
     user_request(&request);
 
     // Cria a resposta HTML
-    char html[1050]; // Buffer para armazenar a resposta HTML
+    char html[1080]; // Buffer para armazenar a resposta HTML
 
     // Instruções html do webserver
     snprintf(html, sizeof(html), // Formatar uma string e armazená-la em um buffer de caracteres
@@ -46,10 +44,10 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
              "</head>\n"
              "<body>\n"
              "<h1>Smart PetDoor</h1>\n"
-             "<form action=\"./unlock_door\"><button>Destrancar porta</button></form>\n"
-             "<form action=\"./lock_door\"><button>Trancar porta</button></form>\n"
-             "<form action=\"./add_pet\"><button>Cadastrar pet</button></form>\n"
-             "<form action=\"./get_status\"><button>Atualizar status</button></form>\n"
+             "<form action=\"./control_door\"><button>Trancar/destrancar porta</button></form>\n"
+             "<form action=\"./tag1\"><button>Tag 1</button></form>\n"
+             "<form action=\"./tag2\"><button>Tag 2</button></form>\n"
+             "<form action=\"./tag3\"><button>Tag 3</button></form>\n"
              "<div style=\"text-align: center;\">\n"
              "<p>Status da porta: %s</p>\n"
              "<p>Tag 1: %s</p>\n"
@@ -58,7 +56,7 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
               "</div>\n"
              "</body>\n"
              "</html>\n",
-             door_locked ? "Trancada" : "Destrancada", pet_inside[0] ? "Dentro" : "Fora", pet_inside[1] ? "Dentro" : "Fora", pet_inside[2] ? "Dentro" : "Fora");
+             door_locked ? "Trancada" : "Destrancada", tag_permission[0] ? "Sim" : "-", tag_permission[1] ? "Sim" : "-", tag_permission[2] ? "Sim" : "-");
 
     // Escreve dados para envio (mas não os envia imediatamente).
     tcp_write(tpcb, html, strlen(html), TCP_WRITE_FLAG_COPY);
@@ -82,30 +80,26 @@ static err_t tcp_server_accept(void *arg, struct tcp_pcb *newpcb, err_t err) {
 }
 
 // Tratamento do request do usuário - digite aqui
-void user_request(char **request){
+void user_request(char **request) {
 
-    if (strstr(*request, "GET /lock_door") != NULL) {
-        door_locked = true; // Trancar a porta
+    if (strstr(*request, "GET /control_door") != NULL) {
+        door_locked = !door_locked; // Trancar a porta
     
-    }else if (strstr(*request, "GET /unlock_door") != NULL) {
-        door_locked = false; // Destrancar a porta
-    
-    }else if (strstr(*request, "GET /get_status") != NULL) {
-       // Força atualização da pagina
+    }else if (strstr(*request, "GET /tag1") != NULL) {
+        tag_permission[0] = !tag_permission[0]; // Autorizar/desautorizar pet 1
+
+    }else if (strstr(*request, "GET /tag2") != NULL) {
+       tag_permission[1] = !tag_permission[1]; // Autorizar/desautorizar pet 2
        
-    }else if (strstr(*request, "GET /add_pet") != NULL) {
-        printf("Adicionando pet...\n");
-        //fflush(stdin);
-        //scanf("%s", tags[0]); // BUG
-        printf("Tag cadastrada: %s\n", tags[0]);
-        tag_permission[0] = true; // Autorizar o pet
+    }else if (strstr(*request, "GET /tag3") != NULL) {
+       tag_permission[2] = !tag_permission[2]; // Autorizar/desautorizar pet 3
     }
 };
 
 
+
 // Função principal
-int main()
-{
+int main() {
     //Inicializa todos os tipos de bibliotecas stdio padrão presentes que estão ligados ao binário.
     stdio_init_all();
 
@@ -154,18 +148,59 @@ int main()
     tcp_accept(server, tcp_server_accept);
     printf("Servidor ouvindo na porta 80\n");
 
+    
+    float distance = 0.0;
+    int64_t echo_duration = 0;
+    uint slice;
+    bool open_door = false;
 
-    while (true){
-        /* 
-        * Efetuar o processamento exigido pelo cyw43_driver ou pela stack TCP/IP.
-        * Este método deve ser chamado periodicamente a partir do ciclo principal 
-        * quando se utiliza um estilo de sondagem pico_cyw43_arch 
-        */
-        cyw43_arch_poll(); // Necessário para manter o Wi-Fi ativo
-        sleep_ms(100);      // Reduz o uso da CPU
+    hcsr04_init(); // Inicializa o sensor ultrassônico
+    slice = servomotor_setup(); // Inicializa o servomotor
+    servomotor_set_position(slice, 65536/2);
+
+    gpio_init(11); // Inicializa o LED
+    gpio_set_dir(11, GPIO_OUT); // Configura o LED como saída
+    gpio_put(11, 0); // Liga o LED
+    
+    
+    while(1){
+        cyw43_arch_poll();
+
+        echo_duration = hcsr04_get_echo_duration();
+
+        if (echo_duration > 0) {
+            distance = hcsr04_calculate_distance(echo_duration);
+        }
+
+        if (distance < 20.0 && !door_locked && stdio_usb_connected()) {
+            // Leitura da coleira (simulado)
+            printf("Select tag (1-3): ");
+            int tag = getchar_timeout_us(2000000);
+            printf("----\n");
+            
+            if (tag != PICO_ERROR_TIMEOUT) {
+                uint8_t tag_index = tag - '0' - 1; // Converte o caractere para índice
+                open_door |= (tag_index < 3 && tag_permission[tag_index]);
+            }
+        }else if(distance > 20.0) {
+            open_door = false;
+        }
+
+        if (open_door) {
+            servomotor_set_position(slice, 6000);
+            gpio_put(11, 1);
+        } else {
+            servomotor_set_position(slice, 1250);
+            gpio_put(11, 0);
+        }
+        
+        // Aguarda 100ms antes de verificar novamente
+        sleep_ms(100);
     }
+    
+    // Se o agendador do FreeRTOS falhar, o código abaixo será executado.
+    cyw43_arch_deinit(); // Desliga a arquitetura CYW43
+    panic_unsupported();
 
-    //Desligar a arquitetura CYW43.
-    cyw43_arch_deinit();
     return 0;
 }
