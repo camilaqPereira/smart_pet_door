@@ -19,18 +19,33 @@ void hcsr04_send_trig_pulse() {
 
 
 int64_t hcsr04_get_echo_duration() {
-    //Wait for echo pulse to begin
-    while (gpio_get(ECHO_PIN) == 0);
-    
+
+    hcsr04_send_trig_pulse(); // Send trigger pulse
+    absolute_time_t timeout_time = make_timeout_time_us(HCSR04_TIMEOUT_US);
+
+    // Wait for echo pulse to begin, with timeout
+    while (gpio_get(ECHO_PIN) == 0) {
+        if (absolute_time_diff_us(get_absolute_time(), timeout_time) < 0) {
+            // Timed out waiting for echo start
+            return -1;
+        }
+    }
+
     absolute_time_t start_time = get_absolute_time();
+    timeout_time = make_timeout_time_us(HCSR04_TIMEOUT_US);
 
-    //Wait for echo pulse to end
-    while (gpio_get(ECHO_PIN) == 1);
-
+    // Wait for echo pulse to end, with timeout
+    while (gpio_get(ECHO_PIN) == 1) {
+        if (absolute_time_diff_us(get_absolute_time(), timeout_time) < 0) {
+            // Timed out waiting for echo end
+            return -1;
+        }
+    }
+    
     absolute_time_t end_time = get_absolute_time();
 
     // Calculate the duration of the echo pulse in us
-    int64_t echo_duration = absolute_time_diff_us(start_time, end_time); 
+    int64_t echo_duration = absolute_time_diff_us(start_time, end_time);
 
     return echo_duration;
 }
