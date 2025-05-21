@@ -4,7 +4,7 @@
 #include "pico/stdlib.h"
 #include "hardware/pwm.h"
 
-#define SERVOMOTOR_PIN 20   // GPIO pin for the servomotor
+#define SERVOMOTOR_PIN 18   // GPIO pin for the servomotor
 
 
 
